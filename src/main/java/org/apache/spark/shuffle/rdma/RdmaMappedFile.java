@@ -29,20 +29,26 @@ import java.util.List;
 import com.ibm.disni.rdma.verbs.IbvMr;
 import com.ibm.disni.rdma.verbs.IbvPd;
 import com.ibm.disni.rdma.verbs.SVCRegMr;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import sun.misc.Unsafe;
 import sun.nio.ch.FileChannelImpl;
 
 public class RdmaMappedFile {
+  private static final Logger logger = LoggerFactory.getLogger(RdmaMappedFile.class);
   private static final Method mmap;
   private static final Method unmmap;
   private static final int ACCESS = IbvMr.IBV_ACCESS_REMOTE_READ;
+  private static long pageSize;
 
-  private File file = null;
-  private FileChannel fileChannel = null;
+  private File file;
+  private FileChannel fileChannel;
 
   private final IbvPd ibvPd;
-  private IbvMr odpMr = null;
 
   private final RdmaMapTaskOutput rdmaMapTaskOutput;
+  private final RdmaBufferManager rdmaBufferManager;
+
   public RdmaMapTaskOutput getRdmaMapTaskOutput() { return rdmaMapTaskOutput; }
 
   private class RdmaFileMapping {
@@ -68,8 +74,21 @@ public class RdmaMappedFile {
       mmap.setAccessible(true);
       unmmap = FileChannelImpl.class.getDeclaredMethod("unmap0", long.class, long.class);
       unmmap.setAccessible(true);
-    } catch (Exception e){
+    } catch (Exception e) {
       throw new RuntimeException(e);
+    }
+
+    try {
+      Field f = Unsafe.class.getDeclaredField("theUnsafe");
+      f.setAccessible(true);
+      Unsafe unsafe = (Unsafe)f.get(null);
+      pageSize =  unsafe.pageSize();
+      if ((pageSize == 0) || (pageSize & (pageSize - 1)) != 0) {
+        throw new Exception("Page size must be non zero and to be a power of 2");
+      }
+    } catch (Throwable e) {
+      logger.warn("Unable to get operating system page size. Guessing 4096.", e);
+      pageSize = 4096;
     }
   }
 
@@ -78,8 +97,7 @@ public class RdmaMappedFile {
       IllegalAccessException {
     this.file = file;
     this.ibvPd = rdmaBufferManager.getPd();
-    this.odpMr = rdmaBufferManager.getOdpMr();
-
+    this.rdmaBufferManager = rdmaBufferManager;
     final RandomAccessFile backingFile = new RandomAccessFile(file, "rw");
     this.fileChannel = backingFile.getChannel();
 
@@ -90,10 +108,6 @@ public class RdmaMappedFile {
     fileChannel = null;
 
     file.deleteOnExit();
-  }
-
-  private static long roundUpTo4096(long i) {
-    return (i + 0xfffL) & ~0xfffL;
   }
 
   private void mapAndRegister(int chunkSize, long[] partitionLengths) throws IOException,
@@ -135,18 +149,22 @@ public class RdmaMappedFile {
             curPartition,
             rdmaFileMapping.address + curLength - partitionLengths[curPartition],
             (int)partitionLengths[curPartition],
-            (rdmaFileMapping.ibvMr != null) ? rdmaFileMapping.ibvMr.getLkey() : odpMr.getLkey());
+            rdmaFileMapping.ibvMr.getLkey());
           curPartition++;
         }
       }
     }
   }
 
+  private static long roundUpToNextPageBoundary(long i) {
+    return (i + pageSize - 1) & ~(pageSize - 1);
+  }
+
   private void mapAndRegister(long fileOffset, long length) throws IOException,
       InvocationTargetException, IllegalAccessException {
-    long distanceFromPageBoundary = fileOffset % 4096;
+    long distanceFromPageBoundary = fileOffset % pageSize;
     long alignedOffset = fileOffset - distanceFromPageBoundary;
-    long alignedLength = roundUpTo4096(length + distanceFromPageBoundary);
+    long alignedLength = roundUpToNextPageBoundary(length + distanceFromPageBoundary);
     long mapAddress = (long)mmap.invoke(fileChannel, 1, alignedOffset, alignedLength);
     long address = mapAddress + distanceFromPageBoundary;
 
@@ -156,15 +174,15 @@ public class RdmaMappedFile {
     }
 
     IbvMr ibvMr = null;
-    if (odpMr == null) {
+    if (!rdmaBufferManager.useOdp()) {
       SVCRegMr svcRegMr = ibvPd.regMr(address, (int)length, ACCESS).execute();
       ibvMr = svcRegMr.getMr();
       svcRegMr.free();
     } else {
-      int ret = odpMr.expPrefetchMr(address, (int)length);
-      if (ret != 0) {
-        throw new IOException("expPrefetchMr failed with: " + ret);
-      }
+      SVCRegMr svcRegMr = ibvPd.regMr(address, (int)length,
+        ACCESS | IbvMr.IBV_ACCESS_ON_DEMAND).execute();
+      ibvMr = svcRegMr.getMr();
+      svcRegMr.free();
     }
 
     rdmaFileMappings.add(new RdmaFileMapping(ibvMr, address, mapAddress, length, alignedLength));
@@ -176,6 +194,7 @@ public class RdmaMappedFile {
       rdmaFileMapping.ibvMr.deregMr().execute().free();
     }
     unmmap.invoke(null, rdmaFileMapping.mapAddress, rdmaFileMapping.alignedLength);
+    getRdmaMapTaskOutput().getRdmaBuffer().free();
   }
 
   private void unregisterAndUnmap() throws InvocationTargetException, IllegalAccessException,
@@ -199,27 +218,14 @@ public class RdmaMappedFile {
   }
 
   private ByteBuffer getByteBuffer(long address, int length) throws IOException {
-    Class<?> classDirectByteBuffer;
     try {
-      classDirectByteBuffer = Class.forName("java.nio.DirectByteBuffer");
-    } catch (ClassNotFoundException e) {
-      throw new IOException("java.nio.DirectByteBuffer class not found");
-    }
-    Constructor<?> constructor;
-    try {
-      constructor = classDirectByteBuffer.getDeclaredConstructor(long.class, int.class);
-    } catch (NoSuchMethodException e) {
-      throw new IOException("java.nio.DirectByteBuffer constructor not found");
-    }
-    constructor.setAccessible(true);
-    ByteBuffer byteBuffer;
-    try {
-      byteBuffer = (ByteBuffer)constructor.newInstance(address, length);
+      return (ByteBuffer)RdmaBuffer.directBufferConstructor.newInstance(address, length);
+    } catch (InvocationTargetException ex) {
+      throw new IOException("java.nio.DirectByteBuffer: " +
+        "InvocationTargetException: " + ex.getTargetException());
     } catch (Exception e) {
       throw new IOException("java.nio.DirectByteBuffer exception: " + e.toString());
     }
-
-    return byteBuffer;
   }
 
   public ByteBuffer getByteBufferForPartition(int partitionId) throws IOException {

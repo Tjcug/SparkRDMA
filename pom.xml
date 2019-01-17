@@ -7,7 +7,7 @@
 
   <groupId>com.github.mellanox</groupId>
   <artifactId>spark-rdma</artifactId>
-  <version>2.0</version>
+  <version>3.1</version>
   <name>${project.artifactId}</name>
   <description>SparkRDMA Shuffle Manager Plugin</description>
   <inceptionYear>2017</inceptionYear>
@@ -61,6 +61,12 @@
         <spark.version>2.3.0</spark.version>
       </properties>
     </profile>
+    <profile>
+      <id>spark-2.4.0</id>
+      <properties>
+        <spark.version>2.4.0</spark.version>
+      </properties>
+    </profile>
   </profiles>
 
   <dependencies>
@@ -73,7 +79,7 @@
     <dependency>
       <groupId>com.ibm.disni</groupId>
       <artifactId>disni</artifactId>
-      <version>1.4</version>
+      <version>1.7</version>
       <exclusions>
         <exclusion>
           <groupId>org.slf4j</groupId>

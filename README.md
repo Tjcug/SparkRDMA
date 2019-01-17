@@ -5,27 +5,36 @@ performing Shuffle data transfers in Spark jobs.
 This open-source project is developed, maintained and supported by [Mellanox Technologies](http://www.mellanox.com).
 
 ## Performance results
-Example performance speedup for [HiBench](https://github.com/intel-hadoop/HiBench) workloads:
+### Terasort
+![TeraSort results](https://user-images.githubusercontent.com/1121987/44670087-6c78bb00-aa2a-11e8-834c-71bc177abd87.png)
 
-![TeraSort results](https://user-images.githubusercontent.com/1121987/38248890-83097350-3752-11e8-8aba-5cc8ed89a9b2.png)
-
-Running 175GB TeraSort workload with SparkRDMA is x1.53 faster than standard Spark (runtime in seconds)
-
-![ScalaSort results](https://user-images.githubusercontent.com/1121987/38267993-ac3089d4-3785-11e8-91f9-016d363a8fb1.png)
-
-Running 286GB ScalaSort with SparkRDMA is x1.28 faster than standard Spark (runtime in seconds)
+Running 320GB TeraSort workload with SparkRDMA is x2.63 faster than standard Spark (runtime in seconds)
 
 Test environment:
 
-16 Spark standalone workers, 2x Intel Xeon E5-2697 v3 @ 2.60GHz, 30 cores per Worker, 256GB RAM, non-flash storage (HDD)
+7 Spark standalone workers on Azure "h16mr" VM instance,  Intel Haswell E5-2667 V3,
 
-Mellanox ConnectX-4 network adapter with 100GbE RoCE fabric, connected with a Mellanox Spectrum switch
+224GB RAM, 2000GB SSD for temporary storage, Mellanox InfiniBand FDR (56Gb/s)
+
+Also featured at the Spark+AI Summit 2018, please see more info on our session:
+https://databricks.com/session/accelerated-spark-on-azure-seamless-and-scalable-hardware-offloads-in-the-cloud
+
+### Pagerank
+![PageRank results](https://user-images.githubusercontent.com/1121987/44669579-ec058a80-aa28-11e8-8ecf-4a66134021e6.png)
+
+Running 19GB Pagerank with SparkRDMA is x2.01 faster than standard Spark (runtime in seconds)
+
+Test environment:
+
+5 Spark standalone workers, 2x Intel Xeon E5-2697 v3 @ 2.60GHz, 25 cores per Worker, 150GB RAM, non-flash storage (HDD)
+
+Mellanox ConnectX-5 network adapter with 100GbE RoCE fabric, connected with a Mellanox Spectrum switch
 
 ## Wiki pages
 For more information on configuration, performance tuning and troubleshooting, please visit the [SparkRDMA GitHub Wiki](https://github.com/Mellanox/SparkRDMA/wiki)
 
 ## Runtime requirements
-* Apache Spark 2.0.0/2.1.0/2.2.0/2.3.0
+* Apache Spark 2.0.0/2.1.0/2.2.0/2.3.0/2.4.0
 * Java 8
 * An RDMA-supported network, e.g. RoCE or Infiniband
 
@@ -36,10 +45,11 @@ Please use the ["Releases"](https://github.com/Mellanox/SparkRDMA/releases) page
 <br>If you would like to build the project yourself, please refer to the ["Build"](https://github.com/Mellanox/SparkRDMA#build) section below.
 
 The pre-built binaries are packed as an archive that contains the following files:
-* spark-rdma-2.0-for-spark-2.0.0-jar-with-dependencies.jar
-* spark-rdma-2.0-for-spark-2.1.0-jar-with-dependencies.jar
-* spark-rdma-2.0-for-spark-2.2.0-jar-with-dependencies.jar
-* spark-rdma-2.0-for-spark-2.3.0-jar-with-dependencies.jar
+* spark-rdma-3.1-for-spark-2.0.0-jar-with-dependencies.jar
+* spark-rdma-3.1-for-spark-2.1.0-jar-with-dependencies.jar
+* spark-rdma-3.1-for-spark-2.2.0-jar-with-dependencies.jar
+* spark-rdma-3.1-for-spark-2.3.0-jar-with-dependencies.jar
+* spark-rdma-3.1-for-spark-2.4.0-jar-with-dependencies.jar
 * libdisni.so
 
 libdisni.so **must** be in `java.library.path` on every Spark Master and Worker (usually in /usr/lib)
@@ -47,10 +57,10 @@ libdisni.so **must** be in `java.library.path` on every Spark Master and Worker 
 ### Configuration
 
 Provide Spark the location of the SparkRDMA plugin jars by using the extraClassPath option.  For standalone mode this can
-be added to either spark-defaults.conf or any runtime configuration file.  For client mode this **must** be added to spark-defaults.conf. For Spark 2.0.0 (Replace with 2.1.0, 2.2.0 or 2.3.0 according to your Spark version):
+be added to either spark-defaults.conf or any runtime configuration file.  For client mode this **must** be added to spark-defaults.conf. For Spark 2.0.0 (Replace with 2.1.0, 2.2.0, 2.3.0, 2.4.0 according to your Spark version):
 ```
-spark.driver.extraClassPath   /path/to/SparkRDMA/target/spark-rdma-2.0-for-spark-2.0.0-jar-with-dependencies.jar
-spark.executor.extraClassPath /path/to/SparkRDMA/target/spark-rdma-2.0-for-spark-2.0.0-jar-with-dependencies.jar
+spark.driver.extraClassPath   /path/to/SparkRDMA/target/spark-rdma-3.1-for-spark-2.0.0-jar-with-dependencies.jar
+spark.executor.extraClassPath /path/to/SparkRDMA/target/spark-rdma-3.1-for-spark-2.0.0-jar-with-dependencies.jar
 ```
 
 ### Running
@@ -67,7 +77,7 @@ Building the SparkRDMA plugin requires [Apache Maven](http://maven.apache.org/) 
 
 1. Obtain a clone of [SparkRDMA](https://github.com/Mellanox/SparkRDMA)
 
-2. Build the plugin for your Spark version (either 2.0.0, 2.1.0, 2.2.0 or 2.3.0), e.g. for Spark 2.0.0:
+2. Build the plugin for your Spark version (either 2.0.0, 2.1.0, 2.2.0, 2.3.0, 2.4.0), e.g. for Spark 2.0.0:
 ```
 mvn -DskipTests clean package -Pspark-2.0.0
 ```
@@ -77,7 +87,7 @@ mvn -DskipTests clean package -Pspark-2.0.0
 ```
 git clone https://github.com/zrlio/disni.git
 cd disni
-git checkout tags/v1.4 -b v1.4
+git checkout tags/v1.7 -b v1.7
 ```
 
 4. Compile and install only libdisni (the jars are already included in the SparkRDMA plugin):
